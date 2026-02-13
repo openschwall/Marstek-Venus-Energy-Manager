@@ -91,7 +91,9 @@ This integration is configured entirely via the Home Assistant UI.
     *   **Host**: The IP address of the battery (or the Modbus-TCP bridge/stick connected to it).
     *   **Port**: The Modbus TCP port (default is `502`).
     *   **Version**: Select your battery model (`v1/v2` or `v3`).
-    *   **Max Charge/Discharge Power**: Select the rated power of your model (e.g., `2500W`).
+    *   **Max Charge/Discharge Power**: Select the rated power of your setup (e.g., `2500W`).
+        > [!CAUTION]
+        > **Safety Warning:** Only use the **2500W** mode if you are sure that your domestic installation can withstand such power.
     *   **SOC Limits**:
         *   **Max SOC**: Stop charging at this percentage (default 100%).
         *   **Min SOC**: Stop discharging at this percentage (default 12%).
