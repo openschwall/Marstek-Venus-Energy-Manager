@@ -99,9 +99,8 @@ class MarstekModbusClient:
         try:
             if self.client is not None:
                 if hasattr(self.client, 'connected') and self.client.connected:
-                    await self.client.close()
+                    self.client.close()
                 else:
-                    # Try to close anyway
                     self.client.close()
         except Exception as e:
             _LOGGER.error("Error closing Modbus connection: %s", e)

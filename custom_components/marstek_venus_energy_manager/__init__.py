@@ -7,7 +7,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform, CONF_HOST, CONF_NAME, CONF_PORT
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.event import async_track_time_interval, async_track_time_change
 from homeassistant.helpers.storage import Store
@@ -2321,18 +2321,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Set up calculated sensors
     await async_setup_calculated_sensors(hass, entry, lambda entities: None)
 
-    # Schedule a delayed startup backfill to replace defaults with real recorder data
-    # Uses an async callback so HA runs it in the event loop (not a thread)
+    # Replace default consumption data with real recorder data
+    # On reload HA is already running, so backfill immediately;
+    # on fresh boot, wait for homeassistant_started so the recorder is ready
     if controller.predictive_charging_enabled:
-        async def _on_homeassistant_started(_event):
+        if hass.state == CoreState.running:
             await controller._startup_backfill_consumption()
+            _LOGGER.info("Startup consumption backfill executed immediately (reload)")
+        else:
+            async def _on_homeassistant_started(_event):
+                await controller._startup_backfill_consumption()
 
-        entry.async_on_unload(
-            hass.bus.async_listen_once(
-                "homeassistant_started", _on_homeassistant_started
+            entry.async_on_unload(
+                hass.bus.async_listen(
+                    "homeassistant_started", _on_homeassistant_started
+                )
             )
-        )
-        _LOGGER.info("Startup consumption backfill scheduled for after HA fully started")
+            _LOGGER.info("Startup consumption backfill scheduled for after HA fully started")
 
     return True
 

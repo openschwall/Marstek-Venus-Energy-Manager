@@ -595,69 +595,6 @@ class OptionsFlowHandler(OptionsFlow):
                 pass
             return False
 
-    async def _write_config_to_batteries(self) -> None:
-        """Write configuration values to all batteries via Modbus."""
-        import asyncio
-        from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT
-
-        _LOGGER.info("Writing updated configuration to batteries")
-
-        for battery_config in self.config_data["batteries"]:
-            battery_version = battery_config.get(CONF_BATTERY_VERSION, DEFAULT_VERSION)
-            reg_map = REGISTER_MAP.get(battery_version, REGISTER_MAP[DEFAULT_VERSION])
-
-            client = MarstekModbusClient(battery_config[CONF_HOST], battery_config[CONF_PORT])
-            try:
-                connected = await client.async_connect()
-                if not connected:
-                    _LOGGER.warning("Could not connect to %s to update configuration", battery_config[CONF_NAME])
-                    continue
-
-                # Convert values
-                max_soc_value = int(battery_config["max_soc"] / 0.1)
-                min_soc_value = int(battery_config["min_soc"] / 0.1)
-                max_charge_power = int(battery_config["max_charge_power"])
-                max_discharge_power = int(battery_config["max_discharge_power"])
-
-                _LOGGER.info("Updating %s (%s): max_soc=%d%%, min_soc=%d%%, max_charge=%dW, max_discharge=%dW",
-                           battery_config[CONF_NAME], battery_version,
-                           battery_config["max_soc"], battery_config["min_soc"],
-                           max_charge_power, max_discharge_power)
-
-                # Write cutoff capacities (only if available)
-                cutoff_charge_reg = reg_map.get("charging_cutoff_capacity")
-                cutoff_discharge_reg = reg_map.get("discharging_cutoff_capacity")
-
-                if cutoff_charge_reg is not None:
-                    await client.async_write_register(cutoff_charge_reg, max_soc_value)
-                    await asyncio.sleep(0.1)
-                    await client.async_write_register(cutoff_discharge_reg, min_soc_value)
-                    await asyncio.sleep(0.1)
-                    _LOGGER.debug("%s: Hardware cutoff registers updated", battery_config[CONF_NAME])
-                else:
-                    _LOGGER.info("%s: No hardware cutoff registers (%s) - will use software enforcement",
-                               battery_config[CONF_NAME], battery_version)
-
-                # Write maximum power limits (available in both versions)
-                max_charge_reg = reg_map.get("max_charge_power")
-                max_discharge_reg = reg_map.get("max_discharge_power")
-
-                if max_charge_reg and max_discharge_reg:
-                    await client.async_write_register(max_charge_reg, max_charge_power)
-                    await asyncio.sleep(0.1)
-                    await client.async_write_register(max_discharge_reg, max_discharge_power)
-                    await asyncio.sleep(0.1)
-
-                _LOGGER.info("Successfully updated configuration for %s", battery_config[CONF_NAME])
-                
-            except Exception as e:
-                _LOGGER.error("Error updating configuration for %s: %s", battery_config[CONF_NAME], e)
-            finally:
-                try:
-                    await client.async_close()
-                except Exception:
-                    pass
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Start the options flow - ask for consumption sensor."""
         try:
@@ -1243,7 +1180,6 @@ class OptionsFlowHandler(OptionsFlow):
                 self.hass.config_entries.async_update_entry(
                     self.config_entry, data=self.config_data
                 )
-                await self._write_config_to_batteries()
                 await self.hass.config_entries.async_reload(self.config_entry.entry_id)
                 return self.async_create_entry(title="", data={})
 
@@ -1285,7 +1221,6 @@ class OptionsFlowHandler(OptionsFlow):
             self.hass.config_entries.async_update_entry(
                 self.config_entry, data=self.config_data
             )
-            await self._write_config_to_batteries()
             await self.hass.config_entries.async_reload(self.config_entry.entry_id)
             return self.async_create_entry(title="", data={})
 
