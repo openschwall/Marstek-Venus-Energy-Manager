@@ -572,7 +572,32 @@ class OptionsFlowHandler(OptionsFlow):
         _LOGGER.info("OptionsFlowHandler initialized successfully for entry: %s", config_entry.entry_id)
 
     async def _test_connection(self, host: str, port: int, version: str = "v2") -> bool:
-        """Test connection to a Marstek Venus battery using version-specific register."""
+        """Test connection to a Marstek Venus battery.
+
+        If a coordinator already holds a connection to this host,
+        reuse it instead of opening a second (unsupported) connection.
+        Marstek firmware only supports one Modbus TCP connection at a time.
+        """
+        # Check if there's an active coordinator for this host
+        entry_data = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id, {})
+        coordinators = entry_data.get("coordinators", [])
+
+        for coordinator in coordinators:
+            if coordinator.host == host:
+                # Reuse existing connection - read SOC register as test
+                soc_register = REGISTER_MAP.get(version, {}).get("battery_soc")
+                if soc_register is None:
+                    return False
+                try:
+                    async with coordinator.lock:
+                        value = await coordinator.client.async_read_register(
+                            soc_register, "uint16"
+                        )
+                    return value is not None
+                except Exception:
+                    return False
+
+        # No existing coordinator for this host - open new connection
         client = MarstekModbusClient(host, port)
         try:
             connected = await client.async_connect()
