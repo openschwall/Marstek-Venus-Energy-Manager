@@ -1358,34 +1358,16 @@ class ChargeDischargeController:
         else:
             expected_force_mode = 0  # None
 
-        # Attempt write + verify, with one retry on failure
+        # Attempt atomic write + verify, with one retry on failure
         for attempt in range(2):
-            # Get version-specific registers
-            charge_power_reg = coordinator.get_register("set_charge_power")
-            discharge_power_reg = coordinator.get_register("set_discharge_power")
-            force_mode_reg = coordinator.get_register("force_mode")
-
-            if None in [charge_power_reg, discharge_power_reg, force_mode_reg]:
-                _LOGGER.error("%s: Cannot write power commands - missing registers", coordinator.name)
-                return
-
-            # Write registers
-            await coordinator.write_register(discharge_power_reg, int(discharge_power), do_refresh=False)
-            await asyncio.sleep(0.05)
-            await coordinator.write_register(charge_power_reg, int(charge_power), do_refresh=False)
-            await asyncio.sleep(0.05)
-            await coordinator.write_register(force_mode_reg, expected_force_mode, do_refresh=False)
-
-            # Wait for battery to process command
-            await asyncio.sleep(0.2)
-
-            # Read back for verification
-            feedback = await coordinator.async_read_power_feedback()
+            feedback = await coordinator.write_power_atomic(
+                int(discharge_power), int(charge_power), expected_force_mode
+            )
 
             if feedback is None:
                 if not coordinator._is_shutting_down:
                     _LOGGER.warning(
-                        "[%s] Power feedback read failed (attempt %d/2)",
+                        "[%s] Power write/feedback failed (attempt %d/2)",
                         coordinator.name, attempt + 1
                     )
                 continue

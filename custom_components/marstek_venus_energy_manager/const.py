@@ -741,8 +741,17 @@ SWITCH_DEFINITIONS_V3 = [
         "data_type": "uint16",
         "scan_interval": "high",
     },
-    # RS485 Control Mode removed for v3: writing 0x55BB to 42000 does not
-    # deactivate force mode in v3 firmware. Use Working Mode (43000) instead.
+    {
+        # RS485 communication control mode switch
+        "name": "RS485 Control Mode",
+        "register": 42000,
+        "command_on": 21930,  # 0x55AA in decimal
+        "command_off": 21947,  # 0x55BB in decimal
+        "key": "rs485_control_mode",
+        "enabled_by_default": True,
+        "data_type": "uint16",
+        "scan_interval": "medium",
+    },
 ]
 
 NUMBER_DEFINITIONS_V3 = [

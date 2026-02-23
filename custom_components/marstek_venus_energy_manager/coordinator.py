@@ -245,13 +245,15 @@ class MarstekVenusDataUpdateCoordinator(DataUpdateCoordinator):
                 continue
 
             # Attempt to read the sensor value from Modbus
+            # Lock ensures reads don't interleave with control loop writes
             try:
-                value = await self.client.async_read_register(
-                    register=sensor["register"],
-                    data_type=sensor.get("data_type", "uint16"),
-                    count=sensor.get("count"),
-                    sensor_key=key,
-                )
+                async with self.lock:
+                    value = await self.client.async_read_register(
+                        register=sensor["register"],
+                        data_type=sensor.get("data_type", "uint16"),
+                        count=sensor.get("count"),
+                        sensor_key=key,
+                    )
 
                 if value is not None:
                     # Apply scaling if defined
@@ -389,4 +391,76 @@ class MarstekVenusDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as e:
                 if not self._is_shutting_down:
                     _LOGGER.warning("[%s] Failed to read power feedback: %s", self.name, e)
+                return None
+
+    async def write_power_atomic(
+        self, discharge_power: int, charge_power: int, force_mode: int
+    ) -> dict | None:
+        """Write all power registers and read feedback atomically under a single lock.
+
+        This prevents coordinator polling reads from interleaving with control loop
+        writes, which causes the v3 firmware to miss or corrupt commands.
+
+        Returns feedback dict or None if any operation fails.
+        """
+        async with self.lock:
+            self.client.unit_id = 1
+
+            discharge_reg = self.get_register("set_discharge_power")
+            charge_reg = self.get_register("set_charge_power")
+            force_reg = self.get_register("force_mode")
+            battery_power_reg = self.get_register("battery_power")
+
+            if None in [discharge_reg, charge_reg, force_reg, battery_power_reg]:
+                if not self._is_shutting_down:
+                    _LOGGER.error("[%s] Missing required registers for atomic power write", self.name)
+                return None
+
+            try:
+                # Write all 3 registers without releasing lock
+                ok1 = await self.client.async_write_register(discharge_reg, discharge_power)
+                await asyncio.sleep(0.05)
+                ok2 = await self.client.async_write_register(charge_reg, charge_power)
+                await asyncio.sleep(0.05)
+                ok3 = await self.client.async_write_register(force_reg, force_mode)
+
+                if not (ok1 and ok2 and ok3):
+                    if not self._is_shutting_down:
+                        _LOGGER.warning(
+                            "[%s] Atomic power write partial failure: discharge=%s, charge=%s, force=%s",
+                            self.name, ok1, ok2, ok3
+                        )
+                    return None
+
+                # Wait for battery to process commands
+                await asyncio.sleep(0.2)
+
+                # Read feedback within same lock (no interleaving)
+                power_dtype = "int16" if self.battery_version == "v3" else "int32"
+                force_fb = await self.client.async_read_register(force_reg, "uint16")
+                charge_fb = await self.client.async_read_register(charge_reg, "uint16")
+                discharge_fb = await self.client.async_read_register(discharge_reg, "uint16")
+                power_fb = await self.client.async_read_register(battery_power_reg, power_dtype)
+
+                if None in (force_fb, charge_fb, discharge_fb, power_fb):
+                    if not self._is_shutting_down:
+                        _LOGGER.warning("[%s] Atomic power feedback read failed", self.name)
+                    return None
+
+                # Update coordinator.data with fresh values
+                if self.data:
+                    self.data["force_mode"] = force_fb
+                    self.data["set_charge_power"] = charge_fb
+                    self.data["set_discharge_power"] = discharge_fb
+                    self.data["battery_power"] = power_fb
+
+                return {
+                    "force_mode": force_fb,
+                    "set_charge_power": charge_fb,
+                    "set_discharge_power": discharge_fb,
+                    "battery_power": power_fb,
+                }
+            except Exception as e:
+                if not self._is_shutting_down:
+                    _LOGGER.warning("[%s] Atomic power write failed: %s", self.name, e)
                 return None

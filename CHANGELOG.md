@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.0.4b1] - 2026-02-23
+## [1.0.4b2] - 2026-02-23
 
 ### Added
 - **V3 battery support**: Version-specific Modbus register maps, entity definitions, and timing for V3 firmware.
@@ -20,6 +20,8 @@
 - Added shutdown guard in `async_update_charge_discharge` to skip all operations when coordinators are shutting down.
 - Reordered `async_unload_entry` to: cancel timers → set shutdown flag → wait for in-flight ops → unload platforms → write shutdown registers → disconnect.
 - Suppressed expected Modbus write errors during shutdown (respects `_is_shutting_down` flag).
+- **V3 Modbus serialization**: Polling reads in `_async_update_data` now acquire the coordinator lock, preventing interleaving with control loop writes on the same TCP connection. V3 firmware mishandled concurrent requests, causing transaction ID mismatches ("extra data") and written values not being applied (e.g., write 2025W → readback 2010W).
+- New `write_power_atomic()` method: writes all three power registers (discharge, charge, force mode) and reads feedback under a single lock acquisition, eliminating polling interleaving between writes.
 
 ## [1.0.3] - 2026-02-22
 
