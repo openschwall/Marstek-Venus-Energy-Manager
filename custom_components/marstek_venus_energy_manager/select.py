@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SELECT_DEFINITIONS
+from .const import DOMAIN
 from .coordinator import MarstekVenusDataUpdateCoordinator
 
 
@@ -20,7 +20,7 @@ async def async_setup_entry(
     coordinators: list[MarstekVenusDataUpdateCoordinator] = hass.data[DOMAIN][entry.entry_id]["coordinators"]
     entities = []
     for coordinator in coordinators:
-        for definition in SELECT_DEFINITIONS:
+        for definition in coordinator.select_definitions:
             entities.append(MarstekVenusSelect(coordinator, definition))
     async_add_entities(entities)
 

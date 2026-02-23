@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, BUTTON_DEFINITIONS
+from .const import DOMAIN
 from .coordinator import MarstekVenusDataUpdateCoordinator
 
 
@@ -21,7 +21,7 @@ async def async_setup_entry(
 
     # Add regular battery buttons
     for coordinator in coordinators:
-        for definition in BUTTON_DEFINITIONS:
+        for definition in coordinator.button_definitions:
             entities.append(MarstekVenusButton(coordinator, definition))
 
     async_add_entities(entities)

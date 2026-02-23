@@ -26,10 +26,8 @@ Please provide any relevant log snippets from Home Assistant. Ensure you don't i
 - Integration Version: [e.g., 1.0.1]
 - Battery info: [e.g., v2/v3]
 - Modbus-TCP bridge/stick info: [e.g., Elfin-EW11]
-- Consumption sensor info: [e.g., Shelly EM3]
-- Solar forecast sensor info: [e.g., Solcast]
+- Consumption sensor info: [e.g., Shelly EM3/Polling rate]
 - Phase type (Installation): [e.g., Single-phase / Three-phase]
-
 
 **Additional context**
 Add any other context about the problem here.

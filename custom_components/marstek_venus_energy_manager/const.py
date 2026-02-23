@@ -28,6 +28,7 @@ REGISTER_MAP = {
         "max_discharge_power": 44003,
         "battery_soc": 32104,
         "battery_power": 32102,
+        "user_work_mode": None,
     },
     "v3": {
         "rs485_control": 42000,
@@ -40,7 +41,14 @@ REGISTER_MAP = {
         "max_discharge_power": 44003,
         "battery_soc": 37005,
         "battery_power": 30001,
+        "user_work_mode": 43000,
     }
+}
+
+# Version-specific Modbus timing (ms between messages)
+MESSAGE_WAIT_MS = {
+    "v2": 50,
+    "v3": 150,  # Firmware v3 requires minimum 150ms between messages
 }
 
 SENSOR_DEFINITIONS = [
@@ -703,11 +711,21 @@ BINARY_SENSOR_DEFINITIONS_V3 = []
 
 SELECT_DEFINITIONS_V3 = [
     {
+        "register": 43000,
+        "name": "Working Mode",
+        "key": "user_work_mode",
+        "enabled_by_default": True,
+        "scan_interval": "high",
+        "data_type": "uint16",
+        "options": {"manual": 0, "anti_feed": 1, "trade_mode": 2},
+    },
+    {
         "register": 42010,
         "name": "Force Mode",
         "key": "force_mode",
         "enabled_by_default": False,
         "scan_interval": "high",
+        "data_type": "uint16",
         "options": {"stop": 0, "charge": 1, "discharge": 2},
     },
 ]
@@ -723,16 +741,8 @@ SWITCH_DEFINITIONS_V3 = [
         "data_type": "uint16",
         "scan_interval": "high",
     },
-    {
-        "register": 42000,
-        "command_on": 21930,
-        "command_off": 21947,
-        "name": "RS485 Control Mode",
-        "key": "rs485_control_mode",
-        "enabled_by_default": False,
-        "data_type": "uint16",
-        "scan_interval": "high",
-    },
+    # RS485 Control Mode removed for v3: writing 0x55BB to 42000 does not
+    # deactivate force mode in v3 firmware. Use Working Mode (43000) instead.
 ]
 
 NUMBER_DEFINITIONS_V3 = [

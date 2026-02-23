@@ -10,7 +10,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SWITCH_DEFINITIONS
+from .const import DOMAIN
 from .coordinator import MarstekVenusDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ async def async_setup_entry(
 
     # Add regular battery switches
     for coordinator in coordinators:
-        for definition in SWITCH_DEFINITIONS:
+        for definition in coordinator.switch_definitions:
             entities.append(MarstekVenusSwitch(coordinator, definition))
 
     # Add manual mode switch (system-level, always present)
@@ -187,15 +187,25 @@ class ManualModeSwitch(SwitchEntity):
         # Set all batteries to 0W (idle state) when entering manual mode
         for coordinator in self.controller.coordinators:
             try:
-                # Set charge power to 0
-                await coordinator.write_register(42020, 0, do_refresh=False)
-                # Set discharge power to 0
-                await coordinator.write_register(42021, 0, do_refresh=False)
-                # Set force mode to None (0)
-                await coordinator.write_register(42010, 0, do_refresh=True)
-                _LOGGER.info(f"Set {coordinator.name} to 0W (idle) for manual mode")
+                charge_reg = coordinator.get_register("set_charge_power")
+                discharge_reg = coordinator.get_register("set_discharge_power")
+                force_reg = coordinator.get_register("force_mode")
+
+                if charge_reg:
+                    await coordinator.write_register(charge_reg, 0, do_refresh=False)
+                if discharge_reg:
+                    await coordinator.write_register(discharge_reg, 0, do_refresh=False)
+                if force_reg:
+                    await coordinator.write_register(force_reg, 0, do_refresh=False)
+
+                # v3: keep user_work_mode=0 (Manual). The battery stays idle
+                # waiting for manual commands. Do NOT set Auto, as that would
+                # let the battery operate on its own.
+
+                await coordinator.async_request_refresh()
+                _LOGGER.info("Set %s to 0W (idle) for manual mode", coordinator.name)
             except Exception as e:
-                _LOGGER.error(f"Failed to set {coordinator.name} to 0W: {e}")
+                _LOGGER.error("Failed to set %s to 0W: %s", coordinator.name, e)
 
         await self.hass.services.async_call(
             "persistent_notification",

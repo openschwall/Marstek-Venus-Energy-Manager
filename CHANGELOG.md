@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.0.4b1] - 2026-02-23
+
+### Added
+- **V3 battery support**: Version-specific Modbus register maps, entity definitions, and timing for V3 firmware.
+- V3 packet correction: Automatically fixes malformed MBAP length bytes in V3 exception responses that caused pymodbus timeouts.
+- V3 Working Mode (`user_work_mode` register 43000): Set to Manual on setup, restored to Auto on shutdown.
+- `Working Mode` select entity for V3 batteries (Manual / Anti-Feed / Trade Mode).
+- Automatic reconnection in Modbus retry loops: Both read and write operations now reconnect if the TCP connection is lost mid-retry.
+
+### Changed
+- Platform files (`button.py`, `number.py`, `select.py`, `switch.py`) now use coordinator's version-specific entity definitions instead of importing hardcoded V2 lists.
+- `ManualModeSwitch` uses `coordinator.get_register()` instead of hardcoded register addresses, making it version-aware.
+- Bumped `pymodbus` requirement from `>=3.0.0` to `>=3.5.0`.
+- Version-specific Modbus timing: V2 uses 50ms, V3 uses 150ms between messages.
+
+### Fixed
+- **Race condition during reload**: The control loop (every 2.0s) and coordinator refresh (every 1.5s) continued running during `async_unload_entry`, causing "Not connected" write errors on registers 42020/42010. Fixed by storing the `async_track_time_interval` unsub callbacks and cancelling them at the start of unload, before closing the connection.
+- Added shutdown guard in `async_update_charge_discharge` to skip all operations when coordinators are shutting down.
+- Reordered `async_unload_entry` to: cancel timers → set shutdown flag → wait for in-flight ops → unload platforms → write shutdown registers → disconnect.
+- Suppressed expected Modbus write errors during shutdown (respects `_is_shutting_down` flag).
+
 ## [1.0.3] - 2026-02-22
 
 ### Fixed

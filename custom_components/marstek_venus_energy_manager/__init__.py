@@ -1612,6 +1612,11 @@ class ChargeDischargeController:
         """Update the charge/discharge power of the batteries."""
         _LOGGER.debug("ChargeDischargeController: async_update_charge_discharge started.")
 
+        # === SHUTDOWN CHECK (absolute priority) ===
+        # Skip all operations if any coordinator is shutting down (integration unloading)
+        if any(c._is_shutting_down for c in self.coordinators):
+            return
+
         # === MANUAL MODE CHECK (highest priority) ===
         # If manual mode is enabled, skip all automatic control logic
         if self.manual_mode_enabled:
@@ -2206,6 +2211,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await coordinator.write_register(rs485_reg, 21930, do_refresh=False)  # 0x55AA
                     await asyncio.sleep(0.1)
 
+                # For v3: set Working Mode to Manual (0) during active control
+                if coordinator.battery_version == "v3":
+                    work_mode_reg = coordinator.get_register("user_work_mode")
+                    if work_mode_reg:
+                        await coordinator.write_register(work_mode_reg, 0, do_refresh=False)  # Manual
+                        await asyncio.sleep(0.1)
+                        _LOGGER.info("%s: Working Mode set to Manual (0) for v3 active control", coordinator.name)
+
                 # Write initial configuration values to the battery
                 max_soc_value = int(battery_config["max_soc"] / 0.1)  # Convert to register value
                 min_soc_value = int(battery_config["min_soc"] / 0.1)  # Convert to register value
@@ -2282,29 +2295,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Restore weekly charge completion state from previous session
     await controller._load_weekly_charge_state()
 
-    hass.data[DOMAIN][entry.entry_id] = {
-        "coordinators": coordinators,
-        "controller": controller,
-    }
-    entry.async_on_unload(
-        async_track_time_interval(
-            hass, controller.async_update_charge_discharge, timedelta(seconds=2.0)
-        )
+    # Set up periodic timers and store unsub callbacks for manual cancellation during unload
+    unsub_control = async_track_time_interval(
+        hass, controller.async_update_charge_discharge, timedelta(seconds=2.0)
     )
+    entry.async_on_unload(unsub_control)
 
     # Force coordinator updates every 1.5 seconds with timestamp-based per-sensor polling
     # This ensures all sensors update according to their scan_interval
     async def _force_coordinator_refresh(now):
         """Force coordinator to check and update data based on timestamp thresholds."""
         await asyncio.gather(*[coordinator.async_request_refresh() for coordinator in coordinators])
-    
+
     _LOGGER.debug("Setting up periodic refresh for all coordinators")
-    
-    entry.async_on_unload(
-        async_track_time_interval(
-            hass, _force_coordinator_refresh, timedelta(seconds=1.5)
-        )
+
+    unsub_refresh = async_track_time_interval(
+        hass, _force_coordinator_refresh, timedelta(seconds=1.5)
     )
+    entry.async_on_unload(unsub_refresh)
+
+    hass.data[DOMAIN][entry.entry_id] = {
+        "coordinators": coordinators,
+        "controller": controller,
+        "unsub_control": unsub_control,
+        "unsub_refresh": unsub_refresh,
+    }
 
     # Schedule daily consumption capture at 23:55 local time every day
     # This captures the day's battery discharge energy before the sensor resets at midnight local
@@ -2344,16 +2359,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    
-    # Get coordinators before they are popped
+
     if data := hass.data[DOMAIN].get(entry.entry_id):
         coordinators = data.get("coordinators", [])
 
-        # Set shutdown flag on all coordinators to suppress expected errors
+        # 1. Cancel periodic timers FIRST to stop control loop and coordinator refresh
+        # These run every 2.0s / 1.5s and would write registers on a closing connection
+        if unsub := data.get("unsub_control"):
+            unsub()
+        if unsub := data.get("unsub_refresh"):
+            unsub()
+
+        # 2. Set shutdown flag on all coordinators to suppress expected errors
         for coordinator in coordinators:
             coordinator.set_shutting_down(True)
 
-        # Safely shut down all batteries before unloading
+        # 3. Brief delay to let any in-flight control loop iteration complete
+        await asyncio.sleep(0.3)
+
+    # 4. Unload platforms (removes entities)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+    # 5. Write shutdown registers and disconnect (no more interference from timers)
+    if data := hass.data[DOMAIN].get(entry.entry_id):
+        coordinators = data.get("coordinators", [])
+
         _LOGGER.info("Shutting down integration - stopping all battery operations")
         for coordinator in coordinators:
             try:
@@ -2375,6 +2405,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     await coordinator.write_register(force_reg, 0, do_refresh=False)
                     await asyncio.sleep(0.05)
 
+                # For v3: restore Working Mode to Auto (1) before disconnecting
+                if coordinator.battery_version == "v3":
+                    work_mode_reg = coordinator.get_register("user_work_mode")
+                    if work_mode_reg:
+                        await coordinator.write_register(work_mode_reg, 1, do_refresh=False)  # Auto/Anti-Feed
+                        await asyncio.sleep(0.1)
+                        _LOGGER.info("%s: Working Mode restored to Auto (1) for v3 shutdown", coordinator.name)
+
                 # Disable RS485 Control Mode (return control to battery's internal logic)
                 _LOGGER.info("Disabling RS485 control mode for %s", coordinator.name)
                 if rs485_reg:
@@ -2384,13 +2422,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.info("%s: Shutdown complete - all control registers reset", coordinator.name)
             except Exception as e:
                 _LOGGER.error("Error shutting down battery %s: %s", coordinator.name, e)
-        
+
         # Disconnect from all coordinators
         await asyncio.gather(*[c.disconnect() for c in coordinators])
 
-    # Unload platforms
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Pop data if unload was successful
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        if unload_ok:
+            hass.data[DOMAIN].pop(entry.entry_id, None)
 
     return unload_ok

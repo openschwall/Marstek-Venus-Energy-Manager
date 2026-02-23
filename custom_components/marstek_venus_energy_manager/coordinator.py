@@ -8,13 +8,15 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.helpers import entity_registry
 
 from .const import (
-    DOMAIN, 
-    SENSOR_DEFINITIONS, 
+    DOMAIN,
+    SENSOR_DEFINITIONS,
     SCAN_INTERVAL,
     NUMBER_DEFINITIONS,
     SELECT_DEFINITIONS,
     SWITCH_DEFINITIONS,
     BINARY_SENSOR_DEFINITIONS,
+    BUTTON_DEFINITIONS,
+    MESSAGE_WAIT_MS,
 )
 from .modbus_client import MarstekModbusClient
 
@@ -39,7 +41,6 @@ class MarstekVenusDataUpdateCoordinator(DataUpdateCoordinator):
         self.name = name
         self.host = host
         self.port = port
-        self.client = MarstekModbusClient(host, port)
         self.consumption_sensor = consumption_sensor
 
         # Validate and store battery version
@@ -51,6 +52,11 @@ class MarstekVenusDataUpdateCoordinator(DataUpdateCoordinator):
             self.battery_version = battery_version
 
         _LOGGER.info("[%s] Initialized as %s battery", name, self.battery_version)
+
+        # Create Modbus client with version-specific timing and packet correction
+        wait_ms = MESSAGE_WAIT_MS.get(self.battery_version, 50)
+        is_v3 = (self.battery_version == "v3")
+        self.client = MarstekModbusClient(host, port, message_wait_ms=wait_ms, is_v3=is_v3)
 
         self.max_charge_power = max_charge_power
         self.max_discharge_power = max_discharge_power
@@ -74,8 +80,15 @@ class MarstekVenusDataUpdateCoordinator(DataUpdateCoordinator):
                 NUMBER_DEFINITIONS_V3,
                 SELECT_DEFINITIONS_V3,
                 SWITCH_DEFINITIONS_V3,
-                BINARY_SENSOR_DEFINITIONS_V3
+                BINARY_SENSOR_DEFINITIONS_V3,
+                BUTTON_DEFINITIONS_V3,
             )
+            self.sensor_definitions = SENSOR_DEFINITIONS_V3
+            self.number_definitions = NUMBER_DEFINITIONS_V3
+            self.select_definitions = SELECT_DEFINITIONS_V3
+            self.switch_definitions = SWITCH_DEFINITIONS_V3
+            self.binary_sensor_definitions = BINARY_SENSOR_DEFINITIONS_V3
+            self.button_definitions = BUTTON_DEFINITIONS_V3
             self._all_definitions = (
                 SENSOR_DEFINITIONS_V3 +
                 NUMBER_DEFINITIONS_V3 +
@@ -84,6 +97,12 @@ class MarstekVenusDataUpdateCoordinator(DataUpdateCoordinator):
                 BINARY_SENSOR_DEFINITIONS_V3
             )
         else:  # v2 (default)
+            self.sensor_definitions = SENSOR_DEFINITIONS
+            self.number_definitions = NUMBER_DEFINITIONS
+            self.select_definitions = SELECT_DEFINITIONS
+            self.switch_definitions = SWITCH_DEFINITIONS
+            self.binary_sensor_definitions = BINARY_SENSOR_DEFINITIONS
+            self.button_definitions = BUTTON_DEFINITIONS
             self._all_definitions = (
                 SENSOR_DEFINITIONS +
                 NUMBER_DEFINITIONS +
@@ -274,17 +293,17 @@ class MarstekVenusDataUpdateCoordinator(DataUpdateCoordinator):
     def _get_entity_type(self, sensor_definition: dict) -> str:
         """Determine entity type based on sensor definition."""
         key = sensor_definition["key"]
-        
+
         # Check which definition list this sensor belongs to by key
-        if key in [s["key"] for s in SENSOR_DEFINITIONS]:
+        if key in [s["key"] for s in self.sensor_definitions]:
             return "sensor"
-        elif key in [s["key"] for s in NUMBER_DEFINITIONS]:
+        elif key in [s["key"] for s in self.number_definitions]:
             return "number"
-        elif key in [s["key"] for s in SELECT_DEFINITIONS]:
+        elif key in [s["key"] for s in self.select_definitions]:
             return "select"
-        elif key in [s["key"] for s in SWITCH_DEFINITIONS]:
+        elif key in [s["key"] for s in self.switch_definitions]:
             return "switch"
-        elif key in [s["key"] for s in BINARY_SENSOR_DEFINITIONS]:
+        elif key in [s["key"] for s in self.binary_sensor_definitions]:
             return "binary_sensor"
         else:
             # Default to sensor if not found

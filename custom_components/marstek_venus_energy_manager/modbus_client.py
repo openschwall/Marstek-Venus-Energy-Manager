@@ -13,13 +13,29 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 
+def _marstek_v3_packet_correction(sending: bool, data: bytes) -> bytes:
+    """Fix malformed Modbus exception responses from Marstek v3 firmware.
+
+    The v3 firmware incorrectly sets the MBAP length byte to 4 instead of 3
+    in exception responses. This causes pymodbus to wait for an extra byte
+    that never arrives, resulting in long timeouts.
+
+    Exception response structure (9 bytes):
+      [0-1] Transaction ID, [2-3] Protocol ID, [4-5] Length (should be 3),
+      [6] Unit ID, [7] Function code (bit 7=1 for exception), [8] Exception code
+    """
+    if not sending and len(data) == 9 and data[5] == 4 and (data[7] & 0x80) == 0x80:
+        return data[0:5] + b'\x03' + data[6:]
+    return data
+
+
 class MarstekModbusClient:
     """
     Wrapper for pymodbus AsyncModbusTcpClient with helper methods
     for async reading/writing and interpreting common data types.
     """
 
-    def __init__(self, host: str, port: int = 502, message_wait_ms: int = 50, timeout: int = 10):
+    def __init__(self, host: str, port: int = 502, message_wait_ms: int = 50, timeout: int = 10, is_v3: bool = False):
         """
         Initialize Modbus client with host, port, message wait time, and timeout.
 
@@ -28,6 +44,7 @@ class MarstekModbusClient:
             port (int): TCP port number.
             message_wait_ms (int): Delay in ms between Modbus messages.
             timeout (int): Connection timeout in seconds.
+            is_v3 (bool): If True, enable v3 firmware packet correction.
         """
         self.host = host
         self.port = port
@@ -38,6 +55,10 @@ class MarstekModbusClient:
             port=port,
             timeout=timeout,
         )
+
+        # Set v3 packet correction as attribute (compatible across all pymodbus 3.x)
+        if is_v3:
+            self.client.trace_packet = _marstek_v3_packet_correction
 
         self.client.message_wait_milliseconds = message_wait_ms
         self.unit_id = 1  # Default Unit ID
@@ -270,6 +291,12 @@ class MarstekModbusClient:
                 await asyncio.sleep(current_retry_delay + jitter)
                 current_retry_delay = min(current_retry_delay * 2, 5.0)  # Cap at 5 seconds
 
+                # Reconnect if connection was lost
+                if not self.client.connected:
+                    if not self._is_shutting_down:
+                        _LOGGER.warning("Connection lost, reconnecting before retry %d for register %d (0x%04X)", attempt + 1, register, register)
+                    await self.async_connect()
+
         if not self._is_shutting_down:
             _LOGGER.error(
                 "Failed to read register %d (0x%04X) after %d attempts",
@@ -305,7 +332,8 @@ class MarstekModbusClient:
                 return not result.isError()
 
             except Exception as e:
-                _LOGGER.exception("Exception during modbus write at register %d (0x%04X) on attempt %d: %s", register, register, attempt + 1, e)
+                if not self._is_shutting_down:
+                    _LOGGER.exception("Exception during modbus write at register %d (0x%04X) on attempt %d: %s", register, register, attempt + 1, e)
 
             attempt += 1
             if attempt < max_retries:
@@ -313,6 +341,12 @@ class MarstekModbusClient:
                 jitter = current_retry_delay * 0.1 * (0.5 - asyncio.get_event_loop().time() % 1)
                 await asyncio.sleep(current_retry_delay + jitter)
                 current_retry_delay = min(current_retry_delay * 2, 5.0)  # Cap at 5 seconds
+
+                # Reconnect if connection was lost
+                if not self.client.connected:
+                    if not self._is_shutting_down:
+                        _LOGGER.warning("Connection lost, reconnecting before retry %d for register %d (0x%04X)", attempt + 1, register, register)
+                    await self.async_connect()
 
         if not self._is_shutting_down:
             _LOGGER.error(
